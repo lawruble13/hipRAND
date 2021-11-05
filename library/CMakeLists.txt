@@ -6,6 +6,11 @@ else()
     set(hipRAND_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/hcc_detail/hiprand.cpp)
 endif()
 
+option(OLD_SYMLINKS "Use the old structure and install symlinks" ON)
+if(OLD_SYMLINKS)
+    set(PREFIX_ARG "PREFIX;hiprand")
+endif()
+
 # Configure a header file to pass the hipRAND version
 configure_file(
     "${PROJECT_SOURCE_DIR}/library/include/hiprand/hiprand_version.h.in"
@@ -49,6 +54,7 @@ rocm_install(
         "${PROJECT_SOURCE_DIR}/library/include"
         "${PROJECT_BINARY_DIR}/library/include"
     EXPORT hiprand-targets
+    ${PREFIX_ARG}
 )
 
 set(FORTRAN_SRCS_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/hiprand/src/fortran")
@@ -63,6 +69,7 @@ if(HIP_COMPILER STREQUAL "nvcc")
         NAME hiprand
         NAMESPACE hip::
         INCLUDE "${CMAKE_CURRENT_BINARY_DIR}/hiprand-fortran-config.cmake"
+        ${PREFIX_ARG}
     )
 else()
     rocm_export_targets(
@@ -71,6 +78,7 @@ else()
         NAMESPACE hip::
         DEPENDS PACKAGE hip
         INCLUDE "${CMAKE_CURRENT_BINARY_DIR}/hiprand-fortran-config.cmake"
+        ${PREFIX_ARG}
     )
 endif()
 
@@ -85,6 +93,43 @@ endif()
 # Fortran wrappers for hipRAND and rocRAND
 if(BUILD_FORTRAN_WRAPPER)
     add_subdirectory(src/fortran)
+endif()
+
+if(OLD_SYMLINKS)
+    function(install_symlinks SRC_DIR)
+        # TODO: Check if SUBDIR is relative path Copy instead of symlink on windows
+        if(CMAKE_HOST_WIN32)
+            set(SYMLINK_CMD "file(COPY \${SRC} DESTINATION \${DEST_DIR})")
+        else()
+            set(SYMLINK_CMD "execute_process(COMMAND ln -sf \${SRC_REL} \${DEST})")
+        endif()
+
+        set(DEST_TOP "\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}")
+        if("${ARGC}" GREATER 1)
+            set(DEST_TOP "${DEST_TOP}/${ARGV1}")
+        endif()
+
+        set(INSTALL_CMD "
+            set(SRC_DIR \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${SRC_DIR})
+            file(GLOB_RECURSE FILES FOLLOW_SYMLINKS RELATIVE \${SRC_DIR} \${SRC_DIR}/*)
+            foreach(FILE \${FILES})
+                set(SRC \${SRC_DIR}/\${FILE})
+                set(DEST ${DEST_TOP}/\${FILE})
+                get_filename_component(DEST_DIR \${DEST} DIRECTORY)
+                file(MAKE_DIRECTORY \${DEST_DIR})
+                file(RELATIVE_PATH SRC_REL \${DEST_DIR} \${SRC})
+                message(STATUS \"symlink: \${SRC_REL} -> \${DEST}\")
+                message(STATUS \"${SYMLINK_CMD}\")
+                ${SYMLINK_CMD}
+            endforeach()
+        ")
+        rocm_install(CODE "${INSTALL_CMD}")
+        install(CODE "${INSTALL_CMD}")
+    endfunction()
+
+    install_symlinks(hiprand/include/hiprand hiprand/include)
+
+    install_symlinks(hiprand)
 endif()
 
 if(NOT HIPRAND_SUBMODULE)
